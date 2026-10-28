@@ -11,6 +11,7 @@ from dataclasses import dataclass
 class SimulationConfig:
     total_time: float = 10.0
     dt: float = 0.01
+    lattice_step: float = 0.1
     diffusion: float = 1.0
     drift: float = 0.0
     branching_rate: float = 0.25
@@ -22,6 +23,8 @@ class SimulationConfig:
             raise ValueError("total_time must be positive")
         if self.dt <= 0:
             raise ValueError("dt must be positive")
+        if self.lattice_step <= 0:
+            raise ValueError("lattice_step must be positive")
         if self.diffusion < 0:
             raise ValueError("diffusion must be non-negative")
         if self.branching_rate < 0:
@@ -30,44 +33,108 @@ class SimulationConfig:
             raise ValueError("x0 must start above boundary")
 
 
-def simulate_single_run(config: SimulationConfig, rng: random.Random) -> dict[str, float | int]:
-    config.validate()
-    positions = [config.x0]
-    sqrt_step = math.sqrt(2.0 * config.diffusion * config.dt)
-    branch_prob = min(1.0, config.branching_rate * config.dt)
+def _gillespie_rates(config: SimulationConfig) -> tuple[float, float, float]:
+    diffusion_rate = config.diffusion / (config.lattice_step**2)
+    drift_right = max(0.0, config.drift) / config.lattice_step
+    drift_left = max(0.0, -config.drift) / config.lattice_step
+    left_rate = diffusion_rate + drift_left
+    right_rate = diffusion_rate + drift_right
+    return left_rate, right_rate, config.branching_rate
 
+
+def _start_site(config: SimulationConfig) -> int:
+    return max(1, int(math.ceil((config.x0 - config.boundary) / config.lattice_step)))
+
+
+def _run_gillespie(
+    config: SimulationConfig,
+    rng: random.Random,
+    *,
+    sample_times: list[float] | None = None,
+) -> dict[str, float | int | list[int] | list[float]]:
+    config.validate()
+    left_rate, right_rate, branch_rate = _gillespie_rates(config)
+    total_particle_rate = left_rate + right_rate + branch_rate
+    particles = [_start_site(config)]
     resets = 0
     max_population = 1
-    steps = int(config.total_time / config.dt)
+    t = 0.0
+    reset_times: list[float] = []
 
-    for _ in range(steps):
-        next_positions: list[float] = []
-        reset_triggered = False
+    sampled_population: list[int] = []
+    sample_index = 0
+    if sample_times is not None:
+        sampled_population.append(len(particles))
+        sample_index = 1
 
-        for x in positions:
-            x_next = x + config.drift * config.dt + sqrt_step * rng.gauss(0.0, 1.0)
+    while t < config.total_time:
+        n = len(particles)
+        if n > max_population:
+            max_population = n
 
-            if x_next <= config.boundary:
-                reset_triggered = True
-                break
+        if total_particle_rate <= 0 or n <= 0:
+            t = config.total_time
+            break
 
-            next_positions.append(x_next)
-            if rng.random() < branch_prob:
-                next_positions.append(x_next)
+        tau = rng.expovariate(n * total_particle_rate)
+        event_time = t + tau
 
-        if reset_triggered:
-            resets += 1
-            positions = [config.x0]
-            continue
+        if sample_times is not None:
+            while (
+                sample_index < len(sample_times)
+                and sample_times[sample_index] < event_time
+            ):
+                sampled_population.append(n)
+                sample_index += 1
 
-        positions = next_positions or [config.x0]
-        if len(positions) > max_population:
-            max_population = len(positions)
+        if event_time > config.total_time:
+            t = config.total_time
+            break
+
+        t = event_time
+        i = rng.randrange(n)
+        u = rng.random() * total_particle_rate
+
+        if u < left_rate:
+            if particles[i] <= 1:
+                particles = [_start_site(config)]
+                resets += 1
+                reset_times.append(t)
+            else:
+                particles[i] -= 1
+        elif u < left_rate + right_rate:
+            particles[i] += 1
+        else:
+            particles.append(particles[i])
+
+        if sample_times is not None:
+            while (
+                sample_index < len(sample_times)
+                and sample_times[sample_index] <= t
+            ):
+                sampled_population.append(len(particles))
+                sample_index += 1
+
+    if sample_times is not None:
+        while sample_index < len(sample_times):
+            sampled_population.append(len(particles))
+            sample_index += 1
 
     return {
-        "final_population": len(positions),
+        "final_population": len(particles),
         "resets": resets,
         "max_population": max_population,
+        "reset_times": reset_times,
+        "population_samples": sampled_population,
+    }
+
+
+def simulate_single_run(config: SimulationConfig, rng: random.Random) -> dict[str, float | int]:
+    stats = _run_gillespie(config, rng)
+    return {
+        "final_population": int(stats["final_population"]),
+        "resets": int(stats["resets"]),
+        "max_population": int(stats["max_population"]),
     }
 
 
@@ -94,41 +161,14 @@ def simulate_ensemble(config: SimulationConfig, runs: int, seed: int = 0) -> dic
 def simulate_population_trajectory(
     config: SimulationConfig, rng: random.Random
 ) -> dict[str, list[float] | list[int]]:
-    config.validate()
-    positions = [config.x0]
-    sqrt_step = math.sqrt(2.0 * config.diffusion * config.dt)
-    branch_prob = min(1.0, config.branching_rate * config.dt)
     steps = int(config.total_time / config.dt)
-
-    times: list[float] = [0.0]
-    populations: list[int] = [1]
-    reset_times: list[float] = []
-
-    for step in range(1, steps + 1):
-        next_positions: list[float] = []
-        reset_triggered = False
-
-        for x in positions:
-            x_next = x + config.drift * config.dt + sqrt_step * rng.gauss(0.0, 1.0)
-
-            if x_next <= config.boundary:
-                reset_triggered = True
-                break
-
-            next_positions.append(x_next)
-            if rng.random() < branch_prob:
-                next_positions.append(x_next)
-
-        if reset_triggered:
-            positions = [config.x0]
-            reset_times.append(step * config.dt)
-        else:
-            positions = next_positions or [config.x0]
-
-        times.append(step * config.dt)
-        populations.append(len(positions))
-
-    return {"times": times, "population": populations, "reset_times": reset_times}
+    times = [i * config.dt for i in range(steps + 1)]
+    stats = _run_gillespie(config, rng, sample_times=times)
+    return {
+        "times": times,
+        "population": list(stats["population_samples"]),
+        "reset_times": list(stats["reset_times"]),
+    }
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -139,6 +179,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--total-time", type=float, default=10.0)
     parser.add_argument("--dt", type=float, default=0.01)
+    parser.add_argument("--lattice-step", type=float, default=0.1)
     parser.add_argument("--diffusion", type=float, default=1.0)
     parser.add_argument("--drift", type=float, default=0.0)
     parser.add_argument("--branching-rate", type=float, default=0.25)
@@ -154,6 +195,7 @@ def main() -> None:
     config = SimulationConfig(
         total_time=args.total_time,
         dt=args.dt,
+        lattice_step=args.lattice_step,
         diffusion=args.diffusion,
         drift=args.drift,
         branching_rate=args.branching_rate,

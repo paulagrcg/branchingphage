@@ -22,6 +22,21 @@ class FPRBranchingSimulationTests(unittest.TestCase):
         b = simulate_ensemble(config, runs=50, seed=3)
         self.assertEqual(a, b)
 
+    def test_negative_drift_produces_resets(self) -> None:
+        config = SimulationConfig(
+            total_time=0.5,
+            dt=0.01,
+            lattice_step=0.1,
+            diffusion=0.0,
+            drift=-2.0,
+            branching_rate=0.0,
+            x0=0.2,
+            boundary=0.0,
+        )
+        stats = simulate_single_run(config, random.Random(4))
+        self.assertGreater(stats["resets"], 0)
+        self.assertEqual(stats["final_population"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

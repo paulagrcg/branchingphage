@@ -4,11 +4,11 @@ Simulation of Branching under First-Passage Resetting.
 
 ## Model implemented
 
-This repository includes a minimal Monte Carlo simulator for a one-dimensional branching diffusion process with first-passage resetting:
+This repository includes a minimal Monte Carlo simulator for a one-dimensional branching diffusion process with first-passage resetting, using a Gillespie event-driven scheme on a spatial lattice:
 
 - Particles start at `x0 > boundary`.
-- Each time step applies drift-diffusion dynamics.
-- Surviving particles branch with probability `branching_rate * dt` (binary branching).
+- Diffusive jumps and drift-driven jumps are sampled as continuous-time events.
+- Branching is sampled as a Poisson event process with rate `branching_rate` per particle.
 - If any particle reaches the boundary (`x <= boundary`), a global first-passage reset is triggered and the system restarts from a single particle at `x0`.
 
 ## Run
@@ -18,6 +18,7 @@ python /home/runner/work/branchingphage/branchingphage/fpr_branching.py --runs 1
 ```
 
 The CLI prints JSON with ensemble averages.
+Use `--lattice-step` to control spatial discretization and `--dt` to control trajectory sampling resolution.
 
 ## Example figure
 

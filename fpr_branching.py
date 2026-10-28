@@ -91,6 +91,46 @@ def simulate_ensemble(config: SimulationConfig, runs: int, seed: int = 0) -> dic
     }
 
 
+def simulate_population_trajectory(
+    config: SimulationConfig, rng: random.Random
+) -> dict[str, list[float] | list[int]]:
+    config.validate()
+    positions = [config.x0]
+    sqrt_step = math.sqrt(2.0 * config.diffusion * config.dt)
+    branch_prob = min(1.0, config.branching_rate * config.dt)
+    steps = int(config.total_time / config.dt)
+
+    times: list[float] = [0.0]
+    populations: list[int] = [1]
+    reset_times: list[float] = []
+
+    for step in range(1, steps + 1):
+        next_positions: list[float] = []
+        reset_triggered = False
+
+        for x in positions:
+            x_next = x + config.drift * config.dt + sqrt_step * rng.gauss(0.0, 1.0)
+
+            if x_next <= config.boundary:
+                reset_triggered = True
+                break
+
+            next_positions.append(x_next)
+            if rng.random() < branch_prob:
+                next_positions.append(x_next)
+
+        if reset_triggered:
+            positions = [config.x0]
+            reset_times.append(step * config.dt)
+        else:
+            positions = next_positions or [config.x0]
+
+        times.append(step * config.dt)
+        populations.append(len(positions))
+
+    return {"times": times, "population": populations, "reset_times": reset_times}
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Simulate branching diffusion under first-passage resetting"

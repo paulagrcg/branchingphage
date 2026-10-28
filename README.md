@@ -19,8 +19,23 @@ python /home/runner/work/branchingphage/branchingphage/fpr_branching.py --runs 1
 
 The CLI prints JSON with ensemble averages.
 
+## Example figure
+
+Generate a deterministic example figure (SVG) of one population trajectory with reset markers:
+
+```bash
+python /home/runner/work/branchingphage/branchingphage/make_example_figure.py
+```
+
+This writes:
+
+- `/home/runner/work/branchingphage/branchingphage/figures/example_trajectory.svg`
+
+![Example trajectory with resets](figures/example_trajectory.svg)
+
 ## Test
 
 ```bash
 python -m unittest /home/runner/work/branchingphage/branchingphage/test_fpr_branching.py
+python -m unittest /home/runner/work/branchingphage/branchingphage/test_example_figure.py
 ```
